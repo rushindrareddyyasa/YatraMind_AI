@@ -13,11 +13,8 @@ from typing import TypedDict, Annotated
 import operator
 import uuid
 
-import psycopg
-from psycopg.rows import dict_row
 
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.postgres import PostgresSaver
 from langchain_core.messages import (
     AnyMessage,
     HumanMessage,
@@ -27,21 +24,6 @@ from langchain_core.messages import (
 from langchain_groq import ChatGroq
 from tools.tavily_tool import tavily_search
 from tools.flight_tool import search_flights
-
-
-def get_database_url():
-    database_url = os.getenv("DATABASE_URL")
-
-    if not database_url:
-        raise ValueError(
-            "DATABASE_URL is missing. Please add your Render PostgreSQL External Database URL to .env"
-        )
-
-    if "sslmode=" not in database_url:
-        separator = "&" if "?" in database_url else "?"
-        database_url = f"{database_url}{separator}sslmode=require"
-
-    return database_url
 
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -228,20 +210,10 @@ graph.add_edge("final_agent", END)
 
 
 # =========================
-# PostgreSQL Checkpointer
+# Compile Graph
 # =========================
-DATABASE_URL = get_database_url()
 
-_conn = psycopg.connect(
-    DATABASE_URL,
-    autocommit=True,
-    row_factory=dict_row
-)
-
-checkpointer = PostgresSaver(_conn)
-checkpointer.setup()
-
-travel_graph = graph.compile(checkpointer=checkpointer)
+travel_graph = graph.compile()
 
 
 
@@ -249,15 +221,10 @@ travel_graph = graph.compile(checkpointer=checkpointer)
 # Function for FastAPI
 # =========================
 
+
 def run_travel_agent(user_input: str, thread_id: str | None = None):
     if not thread_id:
         thread_id = f"user_{uuid.uuid4().hex}"
-
-    config = {
-        "configurable": {
-            "thread_id": thread_id
-        }
-    }
 
     result = travel_graph.invoke(
         {
@@ -269,8 +236,7 @@ def run_travel_agent(user_input: str, thread_id: str | None = None):
             "hotel_results": "",
             "itinerary": "",
             "llm_calls": 0
-        },
-        config=config
+        }
     )
 
     final_answer = result["messages"][-1].content
